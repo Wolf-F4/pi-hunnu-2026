@@ -603,6 +603,7 @@ export class AgentSession {
 				...previousSnapshot,
 				context: {
 					...nextContext,
+					systemPrompt: this.agent.state.systemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
 				messages: updateMessage

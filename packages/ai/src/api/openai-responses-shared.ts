@@ -32,10 +32,10 @@ import type {
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { normalizeContext } from "../utils/normalize-context.ts";
+import { getInitialTools, normalizeContext } from "../utils/normalize-context.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
-import { resolveTranscriptTools } from "../utils/transcript-state.ts";
+import { hasToolDefinitionReplacements } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -124,6 +124,7 @@ export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	supportsAdditionalTools?: boolean;
+	additionalToolsIncludeInitial?: boolean;
 	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
 }
@@ -174,22 +175,29 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, normalizeToolCallId);
-	const transcriptTools = resolveTranscriptTools(
-		normalizedContext,
-		(options?.supportsAdditionalTools ?? false) || (options?.supportsToolSearch ?? false),
-	);
-	const appendSystemToolAdditions = (message: SystemMessage, seed: string): void => {
-		const tools = transcriptTools.getAdditions(message);
-		if (tools.length === 0) return;
+	const loadedToolNames = new Set(getInitialTools(normalizedContext).map((tool) => tool.name));
+	const currentTools = new Map<string, Tool>();
+	const supportsIncrementalToolSearch =
+		(options?.supportsToolSearch ?? false) && !hasToolDefinitionReplacements(normalizedContext);
+	const appendSystemToolChanges = (message: SystemMessage, leading: boolean, seed: string): void => {
 		if (options?.supportsAdditionalTools) {
-			messages.push({
-				type: "additional_tools",
-				role: "developer",
-				tools: convertResponsesTools(tools, options.toolOptions),
-			} satisfies ResponseInputItem);
+			if (leading && !options.additionalToolsIncludeInitial) return;
+			const hasChanges = (message.toolsAdded?.length ?? 0) > 0 || (message.toolsRemoved?.length ?? 0) > 0;
+			for (const tool of message.toolsRemoved ?? []) currentTools.delete(tool.name);
+			for (const tool of message.toolsAdded ?? []) currentTools.set(tool.name, tool);
+			if (hasChanges) {
+				messages.push({
+					type: "additional_tools",
+					role: "developer",
+					tools: convertResponsesTools([...currentTools.values()], options.toolOptions),
+				} satisfies ResponseInputItem);
+			}
 			return;
 		}
-		if (!options?.supportsToolSearch) return;
+		if (!supportsIncrementalToolSearch || leading) return;
+		const tools = (message.toolsAdded ?? []).filter((tool) => !loadedToolNames.has(tool.name));
+		for (const tool of tools) loadedToolNames.add(tool.name);
+		if (tools.length === 0) return;
 		const names = tools.map((tool) => tool.name);
 		const callId = `pi_tool_load_${shortHash(`${seed}:${names.join(",")}`)}`;
 		messages.push({
@@ -204,7 +212,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			call_id: callId,
 			execution: "client",
 			status: "completed",
-			tools: convertResponsesTools(tools, { ...options.toolOptions, toolSearchResult: true }),
+			tools: convertResponsesTools(tools, { ...options?.toolOptions, toolSearchResult: true }),
 		} satisfies ResponseToolSearchOutputItemParam);
 	};
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
@@ -216,7 +224,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	for (const msg of transformedMessages) {
 		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
 		if (msg.role === "system") {
-			if (!isLeadingSystemMessage) appendSystemToolAdditions(msg, `system:${msgIndex}`);
+			appendSystemToolChanges(msg, isLeadingSystemMessage, `system:${msgIndex}`);
 			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
 				const text = getSystemMessageText(msg);
 				if (text.length > 0) {

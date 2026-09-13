@@ -451,6 +451,7 @@ export class Agent {
 
 	private createContextSnapshot(): AgentContext {
 		return {
+			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
 		};

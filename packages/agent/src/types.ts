@@ -413,6 +413,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
+	/** Latest complete system prompt, used to collapse unsupported transcript updates. */
+	systemPrompt: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for execution in this run. */

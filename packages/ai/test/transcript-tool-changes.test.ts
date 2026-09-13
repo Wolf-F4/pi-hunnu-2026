@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
-import { streamSimple } from "../src/compat.ts";
+import { collapseSystemMessages, streamSimple } from "../src/compat.ts";
 import type { Api, Context, Model, Tool } from "../src/types.ts";
 
 class PayloadCaptured extends Error {}
@@ -25,10 +25,24 @@ async function capturePayload<T>(model: Model<Api>, context: Context): Promise<T
 
 const baseTool = tool("base_tool");
 const lateTool = tool("late_tool");
-const context: Context = {
-	systemPrompt: "base prompt",
-	tools: [baseTool],
+const lastTool = tool("last_tool");
+const replacementTool = { ...baseTool, description: "replacement definition" };
+const replacementContext: Context = {
 	messages: [
+		{ role: "system", content: "base prompt", toolsAdded: [baseTool], timestamp: 0 },
+		{ role: "user", content: "before", timestamp: 1 },
+		{
+			role: "system",
+			content: "updated definition",
+			toolsRemoved: [{ name: baseTool.name }],
+			toolsAdded: [replacementTool],
+			timestamp: 2,
+		},
+	],
+};
+const context: Context = {
+	messages: [
+		{ role: "system", content: "base prompt", toolsAdded: [baseTool], timestamp: 0 },
 		{ role: "user", content: "before", timestamp: 1 },
 		{
 			role: "system",
@@ -41,6 +55,46 @@ const context: Context = {
 };
 
 describe("transcript tool changes", () => {
+	test("uses a top-level prompt as the current snapshot while preserving tool transitions", async () => {
+		const model: Model<"anthropic-messages"> = {
+			id: "claude-sonnet-4-5",
+			name: "Claude Sonnet 4.5",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "http://127.0.0.1:9",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 1000,
+		};
+		const collapsed = collapseSystemMessages(context, "current prompt");
+		expect(collapsed.messages.filter((message) => message.role === "system")).toHaveLength(1);
+		const initial = collapsed.messages[0];
+		expect(initial?.role).toBe("system");
+		if (initial?.role !== "system") throw new Error("expected initial system message");
+		expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["late_tool"]);
+
+		const payload = await capturePayload<{
+			system?: Array<{ text: string }>;
+			tools?: Array<{ name: string }>;
+			messages: Array<{ role: string; content: unknown }>;
+		}>(model, collapsed);
+
+		expect(payload.system?.map((block) => block.text)).toEqual(["current prompt"]);
+		expect(payload.tools?.map((value) => value.name)).toEqual(["late_tool"]);
+		expect(JSON.stringify(payload.messages)).not.toContain("base prompt");
+		expect(JSON.stringify(payload.messages)).not.toContain("updated guidance");
+
+		const clearedPayload = await capturePayload<{
+			system?: Array<{ text: string }>;
+			messages: Array<{ role: string; content: unknown }>;
+		}>(model, collapseSystemMessages(context, ""));
+		expect(clearedPayload.system).toBeUndefined();
+		expect(JSON.stringify(clearedPayload.messages)).not.toContain("base prompt");
+		expect(JSON.stringify(clearedPayload.messages)).not.toContain("updated guidance");
+	});
+
 	test("serializes Anthropic additions and removals in native system messages", async () => {
 		const model: Model<"anthropic-messages"> = {
 			id: "claude-opus-5",
@@ -92,6 +146,8 @@ describe("transcript tool changes", () => {
 				{ role: "system", content: "base prompt", toolsAdded: [baseTool], timestamp: 0 },
 				{ role: "user", content: "before", timestamp: 1 },
 				{ role: "system", content: "updated guidance", toolsAdded: [lateTool], timestamp: 2 },
+				{ role: "user", content: "after", timestamp: 3 },
+				{ role: "system", content: "more guidance", toolsAdded: [lastTool], timestamp: 4 },
 			],
 		};
 		const payload = await capturePayload<{
@@ -100,9 +156,11 @@ describe("transcript tool changes", () => {
 		}>(model, additionContext);
 
 		expect(payload.tools?.map((value) => value.name)).toEqual(["base_tool"]);
-		expect(payload.input.find((item) => item.type === "additional_tools")?.tools?.map((value) => value.name)).toEqual(
-			["late_tool"],
-		);
+		expect(
+			payload.input
+				.filter((item) => item.type === "additional_tools")
+				.map((item) => item.tools?.map((value) => value.name)),
+		).toEqual([["late_tool"], ["late_tool", "last_tool"]]);
 	});
 
 	test("maps system-message additions into synthetic tool search", async () => {
@@ -137,6 +195,29 @@ describe("transcript tool changes", () => {
 		).toEqual(["late_tool"]);
 	});
 
+	test("uses the complete current tool definition instead of unsafe tool-search replacement", async () => {
+		const model: Model<"openai-responses"> = {
+			id: "gpt-5.4",
+			name: "GPT-5.4",
+			api: "openai-responses",
+			provider: "openai",
+			baseUrl: "http://127.0.0.1:9",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 1000,
+			compat: { supportsToolSearch: true },
+		};
+		const payload = await capturePayload<{
+			tools?: Array<{ name: string; description: string }>;
+			input: Array<{ type?: string }>;
+		}>(model, replacementContext);
+
+		expect(payload.tools).toMatchObject([{ name: "base_tool", description: "replacement definition" }]);
+		expect(payload.input.map((item) => item.type)).not.toContain("tool_search_call");
+	});
+
 	test("anchors Kimi additions in tool-bearing system messages", async () => {
 		const model: Model<"openai-completions"> = {
 			id: "kimi-k3",
@@ -169,7 +250,30 @@ describe("transcript tool changes", () => {
 		]);
 	});
 
-	test("falls back to the complete current tool state when removals are unsupported", async () => {
+	test("uses the complete current tool definition instead of unsafe Kimi replacement", async () => {
+		const model: Model<"openai-completions"> = {
+			id: "kimi-k3",
+			name: "Kimi K3",
+			api: "openai-completions",
+			provider: "moonshotai",
+			baseUrl: "http://127.0.0.1:9",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 1000,
+			compat: { supportsMidConvoToolAdditions: true },
+		};
+		const payload = await capturePayload<{
+			tools?: Array<{ function?: { name: string; description: string } }>;
+			messages: Array<{ role: string; tools?: unknown }>;
+		}>(model, replacementContext);
+
+		expect(payload.tools).toMatchObject([{ function: { name: "base_tool", description: "replacement definition" } }]);
+		expect(payload.messages.some((message) => message.tools !== undefined)).toBe(false);
+	});
+
+	test("replaces OpenAI additional tool snapshots after removals", async () => {
 		const model: Model<"openai-responses"> = {
 			id: "gpt-5.4",
 			name: "GPT-5.4",
@@ -185,10 +289,14 @@ describe("transcript tool changes", () => {
 		};
 		const payload = await capturePayload<{
 			tools?: Array<{ name: string }>;
-			input: Array<{ type?: string }>;
+			input: Array<{ type?: string; tools?: Array<{ name: string }> }>;
 		}>(model, context);
 
-		expect(payload.tools?.map((value) => value.name)).toEqual(["late_tool"]);
-		expect(payload.input.some((item) => item.type === "additional_tools")).toBe(false);
+		expect(payload.tools).toBeUndefined();
+		expect(
+			payload.input
+				.filter((item) => item.type === "additional_tools")
+				.map((item) => item.tools?.map((value) => value.name)),
+		).toEqual([["base_tool"], ["late_tool"]]);
 	});
 });

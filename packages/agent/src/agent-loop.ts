@@ -6,7 +6,9 @@
 import {
 	type AssistantMessage,
 	type Context,
+	collapseSystemMessages,
 	EventStream,
+	getTranscriptCapabilities,
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
@@ -272,6 +274,20 @@ async function runLoop(
 	await emit({ type: "agent_end", messages: newMessages });
 }
 
+async function createContext(
+	context: AgentContext,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+): Promise<Context> {
+	const messages = config.transformContext
+		? await config.transformContext(context.messages, signal)
+		: context.messages;
+	const llmContext: Context = { messages: await config.convertToLlm(messages) };
+	return getTranscriptCapabilities(config.model).midConversationSystemMessages
+		? llmContext
+		: collapseSystemMessages(llmContext, context.systemPrompt);
+}
+
 /**
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
@@ -283,16 +299,7 @@ async function streamAssistantResponse(
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
 ): Promise<AssistantMessage> {
-	// Apply context transform if configured (AgentMessage[] → AgentMessage[])
-	let messages = context.messages;
-	if (config.transformContext) {
-		messages = await config.transformContext(messages, signal);
-	}
-
-	// Convert to LLM-compatible messages (AgentMessage[] → Message[])
-	const llmMessages = await config.convertToLlm(messages);
-
-	const llmContext: Context = { messages: llmMessages };
+	const llmContext = await createContext(context, config, signal);
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =

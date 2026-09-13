@@ -41,13 +41,18 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import {
+	getCurrentTools,
+	getInitialTools,
+	normalizeContext,
+	type TranscriptContext,
+} from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
-import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
+import { getDeclaredTools, hasToolDefinitionReplacements } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -799,7 +804,9 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const transcriptTools = resolveTranscriptTools(context, compat.supportsMidConvoToolAdditions === true);
+	const supportsIncrementalToolAdditions =
+		compat.supportsMidConvoToolAdditions === true && !hasToolDefinitionReplacements(context);
+	const requestTools = supportsIncrementalToolAdditions ? getInitialTools(context) : getCurrentTools(context);
 	const messages = convertMessages(model, context, compat, {
 		grammarToolInputProperties,
 	});
@@ -837,8 +844,8 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		params.tools = convertTools(transcriptTools.requestTools, compat);
+	if (requestTools.length > 0) {
+		params.tools = convertTools(requestTools, compat);
 		if (compat.zaiToolStream) {
 			(params as any).tool_stream = true;
 		}
@@ -1210,7 +1217,9 @@ export function convertMessages(
 	};
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id));
-	const transcriptTools = resolveTranscriptTools(normalizedContext, compat.supportsMidConvoToolAdditions === true);
+	const supportsIncrementalToolAdditions =
+		compat.supportsMidConvoToolAdditions === true && !hasToolDefinitionReplacements(normalizedContext);
+	const loadedToolNames = new Set(getInitialTools(normalizedContext).map((tool) => tool.name));
 	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 
 	let lastRole: string | null = null;
@@ -1227,7 +1236,10 @@ export function convertMessages(
 		}
 
 		if (msg.role === "system") {
-			const addedTools = transcriptTools.getAdditions(msg);
+			const addedTools = supportsIncrementalToolAdditions
+				? (msg.toolsAdded ?? []).filter((tool) => !loadedToolNames.has(tool.name))
+				: [];
+			for (const tool of addedTools) loadedToolNames.add(tool.name);
 			if (addedTools.length > 0) {
 				const kimiToolMessage: KimiToolSystemMessageParam = {
 					role: "system",

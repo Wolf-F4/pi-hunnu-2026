@@ -134,6 +134,32 @@ describe("Agent", () => {
 		expect(agent.state.thinkingLevel).toBe("low");
 	});
 
+	it("supplies the retained prompt to providers without system-message support", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		if (!model) throw new Error("expected test model");
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "Current prompt",
+				model,
+				messages: [{ role: "system", content: "Original prompt", timestamp: 1 }],
+			},
+			streamFn: (_model, context) => {
+				expect(context.systemPrompt).toBeUndefined();
+				const systemMessages = context.messages.filter((message) => message.role === "system");
+				expect(systemMessages).toHaveLength(1);
+				expect(systemMessages[0]?.content).toBe("Current prompt");
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = createAssistantMessage("done");
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("Hello");
+	});
+
 	it("converts initial prompt and tools into transcript state", () => {
 		const tool: AgentTool = {
 			name: "echo",

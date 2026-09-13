@@ -30,6 +30,29 @@ export function normalizeContext(context: Context): TranscriptContext {
 	return { messages: [initialMessage, ...context.messages] } as TranscriptContext;
 }
 
+/**
+ * Collapse prompt history for an API without native mid-conversation system messages.
+ *
+ * The caller supplies the exact current prompt because textual prompt updates cannot
+ * be replayed mechanically. Tool changes are structured, so they are replayed into
+ * the new leading message before intermediate system messages are removed.
+ */
+export function collapseSystemMessages(context: Context, systemPrompt: string): TranscriptContext {
+	const normalizedContext = normalizeContext(context);
+	const initialSystemMessage = getInitialSystemMessage(normalizedContext);
+	return {
+		messages: [
+			{
+				role: "system",
+				content: systemPrompt,
+				toolsAdded: getCurrentTools(normalizedContext),
+				timestamp: initialSystemMessage?.timestamp ?? 0,
+			},
+			...normalizedContext.messages.filter((message) => message.role !== "system"),
+		],
+	} as TranscriptContext;
+}
+
 /** Return the leading system message, if the transcript starts with one. */
 export function getInitialSystemMessage(context: TranscriptContext): SystemMessage | undefined {
 	const first = context.messages[0];

@@ -18,11 +18,16 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
+import {
+	getCurrentTools,
+	getInitialTools,
+	normalizeContext,
+	type TranscriptContext,
+} from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { getDeclaredTools, resolveTranscriptTools } from "../utils/transcript-state.ts";
+import { getDeclaredTools, hasToolDefinitionReplacements } from "../utils/transcript-state.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -291,10 +296,23 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const transcriptTools = resolveTranscriptTools(context, compat.supportsAdditionalTools || compat.supportsToolSearch);
+	const hasToolReplacements = hasToolDefinitionReplacements(context);
+	const additionalToolsIncludeInitial =
+		compat.supportsAdditionalTools &&
+		(hasToolReplacements ||
+			context.messages.some((message) => message.role === "system" && (message.toolsRemoved?.length ?? 0) > 0));
+	const supportsIncrementalToolSearch = compat.supportsToolSearch && !hasToolReplacements;
+	const requestTools = compat.supportsAdditionalTools
+		? additionalToolsIncludeInitial
+			? []
+			: getInitialTools(context)
+		: supportsIncrementalToolSearch
+			? getInitialTools(context)
+			: getCurrentTools(context);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 		supportsAdditionalTools: compat.supportsAdditionalTools,
+		additionalToolsIncludeInitial,
 		supportsToolSearch: compat.supportsToolSearch,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
@@ -327,8 +345,8 @@ function buildParams(
 		params.service_tier = options.serviceTier;
 	}
 
-	if (transcriptTools.requestTools.length > 0) {
-		params.tools = convertResponsesTools(transcriptTools.requestTools, {
+	if (requestTools.length > 0) {
+		params.tools = convertResponsesTools(requestTools, {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});

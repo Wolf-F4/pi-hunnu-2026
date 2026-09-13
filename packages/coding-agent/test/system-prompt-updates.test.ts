@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, type Tool, type TranscriptCapabilities } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type Tool, type TranscriptCapabilities } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
@@ -20,14 +20,10 @@ import { createHarness } from "./suite/harness.ts";
 
 const nativeCapabilities: TranscriptCapabilities = {
 	midConversationSystemMessages: true,
-	midConversationToolAdditions: true,
-	midConversationToolRemovals: true,
 };
 
 const noCapabilities: TranscriptCapabilities = {
 	midConversationSystemMessages: false,
-	midConversationToolAdditions: false,
-	midConversationToolRemovals: false,
 };
 
 const tool = (name: string) => ({ name, description: name, parameters: Type.Object({}) });
@@ -149,6 +145,13 @@ describe("system prompt updates", () => {
 					expect(update?.toolsRemoved).toEqual([{ name: "first" }]);
 					expect(update?.content).toContain("second prompt snippet");
 					expect(update?.content).toContain("Use second carefully.");
+					expect(update?.content).toContain("no longer available");
+					return fauxAssistantMessage([fauxToolCall("first", {})], { stopReason: "toolUse" });
+				},
+				(providerContext) => {
+					const result = providerContext.messages.filter((message) => message.role === "toolResult").at(-1);
+					expect(result).toMatchObject({ role: "toolResult", toolName: "first", isError: true });
+					expect(JSON.stringify(result)).toContain("Tool first not found");
 					return fauxAssistantMessage("second");
 				},
 			]);
@@ -209,7 +212,7 @@ describe("system prompt updates", () => {
 		}
 	});
 
-	test("emits ordered tool deltas only when the transport can represent them", () => {
+	test("emits ordered tool deltas and unavailable-tool guidance", () => {
 		const options = {
 			cwd: "/tmp",
 			selectedTools: [],
@@ -253,15 +256,30 @@ describe("system prompt updates", () => {
 		expect(removal.message).toMatchObject({ toolsRemoved: [{ name: "first" }] });
 		expect(removal.message?.toolsAdded).toBeUndefined();
 
-		const replacement = prepareModelContextUpdate({
+		const unsupportedRemoval = prepareModelContextUpdate({
 			options,
 			tools: new Map([[first.name, first]]),
 			previous: addition.state,
 			capabilities: noCapabilities,
 			modelKey: "model",
 		});
-		expect(replacement.message).toMatchObject({ toolsRemoved: [{ name: "second" }] });
-		expect(replacement.message?.toolsAdded).toBeUndefined();
-		expect(replacement.message?.content).toContain("complete current system prompt");
+		expect(unsupportedRemoval.message).toMatchObject({ toolsRemoved: [{ name: "second" }] });
+		expect(unsupportedRemoval.message?.toolsAdded).toBeUndefined();
+		expect(unsupportedRemoval.message?.content).toContain("no longer available");
+		expect(unsupportedRemoval.message?.content).not.toContain("complete current system prompt");
+
+		const changed = { ...first, description: "changed" };
+		const definitionChange = prepareModelContextUpdate({
+			options,
+			tools: new Map([[changed.name, changed]]),
+			previous: unsupportedRemoval.state,
+			capabilities: nativeCapabilities,
+			modelKey: "model",
+		});
+		expect(definitionChange.message).toMatchObject({
+			toolsAdded: [changed],
+			toolsRemoved: [{ name: "first" }],
+		});
+		expect(definitionChange.message?.content).not.toContain("complete current system prompt");
 	});
 });

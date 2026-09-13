@@ -100,7 +100,7 @@ describe("default stream function compatibility", () => {
 		});
 
 		try {
-			const context: AgentContext = { messages: [], tools: [] };
+			const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
 			const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
 			const stream = Reflect.apply(agentLoop, undefined, [
 				[createUserMessage("Hello")],
@@ -120,6 +120,7 @@ describe("default stream function compatibility", () => {
 describe("agentLoop with AgentMessage", () => {
 	it("should emit events with AgentMessage types", async () => {
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [],
 		};
@@ -172,6 +173,7 @@ describe("agentLoop with AgentMessage", () => {
 			timestamp: 1,
 		};
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [],
 		};
@@ -218,6 +220,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [notification as unknown as AgentMessage], // Custom message in context
 			tools: [],
 		};
@@ -259,6 +262,7 @@ describe("agentLoop with AgentMessage", () => {
 
 	it("should apply transformContext before convertToLlm", async () => {
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [
 				createUserMessage("old message 1"),
 				createAssistantMessage([{ type: "text", text: "old response 1" }]),
@@ -345,6 +349,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -423,6 +428,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -495,6 +501,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -573,6 +580,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -647,6 +655,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -729,6 +738,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -847,6 +857,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [slowTool],
 		};
@@ -940,6 +951,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [slowTool, fastTool],
 		};
@@ -1015,6 +1027,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1072,6 +1085,7 @@ describe("agentLoop with AgentMessage", () => {
 			},
 		};
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1088,6 +1102,7 @@ describe("agentLoop with AgentMessage", () => {
 				prepared = true;
 				return {
 					context: {
+						systemPrompt: currentContext.systemPrompt,
 						messages: currentContext.messages.slice(),
 						tools: currentContext.tools,
 					},
@@ -1155,6 +1170,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1250,6 +1266,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1301,6 +1318,7 @@ describe("agentLoop with AgentMessage", () => {
 			},
 		};
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1359,6 +1377,7 @@ describe("agentLoop with AgentMessage", () => {
 			},
 		};
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1417,6 +1436,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1480,6 +1500,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [tool],
 		};
@@ -1515,6 +1536,7 @@ describe("agentLoop with AgentMessage", () => {
 describe("agentLoopContinue with AgentMessage", () => {
 	it("should throw when context has no messages", () => {
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [],
 			tools: [],
 		};
@@ -1535,6 +1557,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		const userMessage: AgentMessage = createUserMessage("Hello");
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [userMessage],
 			tools: [],
 		};
@@ -1587,6 +1610,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		};
 
 		const context: AgentContext = {
+			systemPrompt: "",
 			messages: [customMessage as unknown as AgentMessage],
 			tools: [],
 		};

@@ -530,6 +530,7 @@ export interface ToolReference {
 }
 
 export interface Context {
+	/** Initial system prompt shorthand for callers that do not use a leading system message. */
 	systemPrompt?: string;
 	messages: Message[];
 	tools?: Tool[];

@@ -258,7 +258,6 @@ export function prepareModelContextUpdate(input: {
 			return newTool === undefined || !isDeepStrictEqual(tool, newTool);
 		})
 		.map(([name]) => ({ name }));
-	const toolDefinitionsChanged = toolsAdded.some((tool) => previous.tools.has(tool.name));
 
 	if (
 		previous.modelKey === modelKey &&
@@ -270,15 +269,7 @@ export function prepareModelContextUpdate(input: {
 	}
 
 	const canUpdatePrompt = promptDiff.type === "unchanged" || capabilities.midConversationSystemMessages;
-	const canAddTools = toolsAdded.length === 0 || capabilities.midConversationToolAdditions;
-	const canRemoveTools = toolsRemoved.length === 0 || capabilities.midConversationToolRemovals;
-	const requiresReplacement =
-		previous.modelKey !== modelKey ||
-		toolDefinitionsChanged ||
-		promptDiff.type === "replace" ||
-		!canUpdatePrompt ||
-		!canAddTools ||
-		!canRemoveTools;
+	const requiresReplacement = previous.modelKey !== modelKey || promptDiff.type === "replace" || !canUpdatePrompt;
 	const content: string[] = [];
 	if (requiresReplacement) {
 		content.push(
