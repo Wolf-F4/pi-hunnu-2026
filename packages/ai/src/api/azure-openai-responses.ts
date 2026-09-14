@@ -13,16 +13,11 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import {
-	getCurrentTools,
-	getInitialTools,
-	normalizeContext,
-	type TranscriptContext,
-} from "../utils/normalize-context.ts";
+import { normalizeContext, type TranscriptContext } from "../utils/normalize-context.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
-import { getDeclaredTools, hasToolDefinitionReplacements } from "../utils/transcript-state.ts";
+import { getDeclaredTools, getResponsesTranscriptToolState } from "../utils/transcript-state.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -292,19 +287,11 @@ function buildParams(
 ) {
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
-	const hasToolReplacements = hasToolDefinitionReplacements(context);
-	const additionalToolsIncludeInitial =
-		supportsAdditionalTools &&
-		(hasToolReplacements ||
-			context.messages.some((message) => message.role === "system" && (message.toolsRemoved?.length ?? 0) > 0));
-	const supportsIncrementalToolSearch = supportsToolSearch && !hasToolReplacements;
-	const requestTools = supportsAdditionalTools
-		? additionalToolsIncludeInitial
-			? []
-			: getInitialTools(context)
-		: supportsIncrementalToolSearch
-			? getInitialTools(context)
-			: getCurrentTools(context);
+	const { requestTools, additionalToolsIncludeInitial } = getResponsesTranscriptToolState(
+		context,
+		supportsAdditionalTools,
+		supportsToolSearch,
+	);
 	const messages = convertResponsesMessages(model, context, AZURE_TOOL_CALL_PROVIDERS, {
 		grammarToolInputProperties,
 		supportsAdditionalTools,

@@ -2,8 +2,7 @@
  * System prompt construction and project context loading
  */
 
-import { isDeepStrictEqual } from "node:util";
-import type { SystemMessage, Tool, ToolReference, TranscriptCapabilities } from "@earendil-works/pi-ai";
+import { getToolStateChanges, type SystemMessage, type Tool, type TranscriptCapabilities } from "@earendil-works/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
@@ -246,18 +245,7 @@ export function prepareModelContextUpdate(input: {
 	}
 
 	const promptDiff = diffSystemPrompts(previous.prompt, prompt);
-	const toolsAdded = [...tools]
-		.filter(([name, tool]) => {
-			const oldTool = previous.tools.get(name);
-			return oldTool === undefined || !isDeepStrictEqual(oldTool, tool);
-		})
-		.map(([, tool]) => tool);
-	const toolsRemoved: ToolReference[] = [...previous.tools]
-		.filter(([name, tool]) => {
-			const newTool = tools.get(name);
-			return newTool === undefined || !isDeepStrictEqual(tool, newTool);
-		})
-		.map(([name]) => ({ name }));
+	const { toolsAdded, toolsRemoved } = getToolStateChanges([...previous.tools.values()], [...tools.values()]);
 
 	if (
 		previous.modelKey === modelKey &&

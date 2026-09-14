@@ -127,6 +127,31 @@ describe("transcript tool changes", () => {
 		});
 	});
 
+	test("requires both Anthropic capabilities for native tool changes", async () => {
+		const model: Model<"anthropic-messages"> = {
+			id: "claude-opus-5",
+			name: "Claude Opus 5",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "http://127.0.0.1:9",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 1000,
+			compat: { supportsMidConvoToolChanges: true },
+		};
+		const payload = await capturePayload<{
+			betas?: string[];
+			tools?: Array<{ name: string }>;
+			messages: Array<{ role: string; content: unknown }>;
+		}>(model, context);
+
+		expect(payload.betas ?? []).not.toContain("mid-conversation-tool-changes-2026-07-01");
+		expect(payload.tools?.map((value) => value.name)).toEqual(["late_tool"]);
+		expect(JSON.stringify(payload.messages)).not.toContain("tool_removal");
+	});
+
 	test("anchors OpenAI additions at their system message", async () => {
 		const model: Model<"openai-responses"> = {
 			id: "gpt-5.4",
@@ -195,6 +220,29 @@ describe("transcript tool changes", () => {
 		).toEqual(["late_tool"]);
 	});
 
+	test("uses complete current tools instead of dropping tool-search removals", async () => {
+		const model: Model<"openai-responses"> = {
+			id: "gpt-5.4",
+			name: "GPT-5.4",
+			api: "openai-responses",
+			provider: "openai",
+			baseUrl: "http://127.0.0.1:9",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 1000,
+			compat: { supportsToolSearch: true },
+		};
+		const payload = await capturePayload<{
+			tools?: Array<{ name: string }>;
+			input: Array<{ type?: string }>;
+		}>(model, context);
+
+		expect(payload.tools?.map((value) => value.name)).toEqual(["late_tool"]);
+		expect(payload.input.map((item) => item.type)).not.toContain("tool_search_call");
+	});
+
 	test("uses the complete current tool definition instead of unsafe tool-search replacement", async () => {
 		const model: Model<"openai-responses"> = {
 			id: "gpt-5.4",
@@ -248,6 +296,29 @@ describe("transcript tool changes", () => {
 		expect(payload.messages.find((message) => message.tools)?.tools?.map((value) => value.function?.name)).toEqual([
 			"late_tool",
 		]);
+	});
+
+	test("uses complete current tools instead of dropping Kimi removals", async () => {
+		const model: Model<"openai-completions"> = {
+			id: "kimi-k3",
+			name: "Kimi K3",
+			api: "openai-completions",
+			provider: "moonshotai",
+			baseUrl: "http://127.0.0.1:9",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 1000,
+			compat: { supportsMidConvoToolAdditions: true },
+		};
+		const payload = await capturePayload<{
+			tools?: Array<{ function?: { name: string } }>;
+			messages: Array<{ role: string; tools?: unknown }>;
+		}>(model, context);
+
+		expect(payload.tools?.map((value) => value.function?.name)).toEqual(["late_tool"]);
+		expect(payload.messages.some((message) => message.tools !== undefined)).toBe(false);
 	});
 
 	test("uses the complete current tool definition instead of unsafe Kimi replacement", async () => {

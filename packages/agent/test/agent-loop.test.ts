@@ -118,6 +118,120 @@ describe("default stream function compatibility", () => {
 });
 
 describe("agentLoop with AgentMessage", () => {
+	it("preserves current prompt and tools when conversion removes system messages", async () => {
+		const tool: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [], details: {} }),
+		};
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: (messages) => messages.filter((message) => message.role !== "system") as Message[],
+		};
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, (_model, llmContext) => {
+			expect(llmContext.systemPrompt).toBe("You are helpful.");
+			expect(llmContext.tools?.map((value) => value.name)).toEqual(["echo"]);
+			const result = new MockAssistantStream();
+			queueMicrotask(() => {
+				result.push({
+					type: "done",
+					reason: "stop",
+					message: createAssistantMessage([{ type: "text", text: "done" }]),
+				});
+			});
+			return result;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+	});
+
+	it("projects the latest prompt and tools for addition-only transports after removals", async () => {
+		const oldTool = { name: "old", description: "Old tool", parameters: Type.Object({}) };
+		const currentToolDeclaration = {
+			name: "current",
+			description: "Current tool",
+			parameters: Type.Object({}),
+		};
+		const currentTool: AgentTool = {
+			...currentToolDeclaration,
+			label: "Current",
+			execute: async () => ({ content: [], details: {} }),
+		};
+		const models: Array<Model<"openai-completions"> | Model<"openai-responses">> = [
+			{
+				id: "kimi-k3",
+				name: "Kimi K3",
+				api: "openai-completions",
+				provider: "moonshotai",
+				baseUrl: "https://example.invalid",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 2048,
+				compat: { supportsMidConvoToolAdditions: true },
+			},
+			{
+				...createModel(),
+				compat: { supportsToolSearch: true },
+			},
+		];
+
+		for (const model of models) {
+			const context: AgentContext = {
+				systemPrompt: "exact latest prompt",
+				messages: [
+					{ role: "system", content: "old prompt", toolsAdded: [oldTool], timestamp: 1 },
+					createUserMessage("before update"),
+					{
+						role: "system",
+						content: "intermediate prompt update",
+						toolsRemoved: [{ name: oldTool.name }],
+						toolsAdded: [currentToolDeclaration],
+						timestamp: 2,
+					},
+				],
+				tools: [currentTool],
+			};
+			const config: AgentLoopConfig = { model, convertToLlm: identityConverter };
+			const stream = agentLoop(
+				[createUserMessage("after update")],
+				context,
+				config,
+				undefined,
+				(_model, providerContext) => {
+					const systemMessages = providerContext.messages.filter((message) => message.role === "system");
+					expect(systemMessages).toHaveLength(1);
+					const systemMessage = systemMessages[0];
+					if (systemMessage?.role !== "system") throw new Error("expected system message");
+					expect(systemMessage.content).toBe("exact latest prompt");
+					expect(systemMessage.toolsAdded?.map((tool) => tool.name)).toEqual(["current"]);
+					expect(JSON.stringify(providerContext.messages)).not.toContain("intermediate prompt update");
+					expect(JSON.stringify(providerContext.messages)).toContain("before update");
+					const result = new MockAssistantStream();
+					queueMicrotask(() => {
+						result.push({
+							type: "done",
+							reason: "stop",
+							message: createAssistantMessage([{ type: "text", text: "done" }]),
+						});
+					});
+					return result;
+				},
+			);
+			await stream.result();
+		}
+	});
+
 	it("should emit events with AgentMessage types", async () => {
 		const context: AgentContext = {
 			systemPrompt: "",

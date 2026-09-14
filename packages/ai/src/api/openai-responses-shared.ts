@@ -35,7 +35,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getInitialTools, normalizeContext } from "../utils/normalize-context.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
-import { hasToolDefinitionReplacements } from "../utils/transcript-state.ts";
+import { hasNonAdditiveToolChanges } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	type GrammarToolInputJsonBuffer,
@@ -178,7 +178,7 @@ export function convertResponsesMessages<TApi extends Api>(
 	const loadedToolNames = new Set(getInitialTools(normalizedContext).map((tool) => tool.name));
 	const currentTools = new Map<string, Tool>();
 	const supportsIncrementalToolSearch =
-		(options?.supportsToolSearch ?? false) && !hasToolDefinitionReplacements(normalizedContext);
+		(options?.supportsToolSearch ?? false) && !hasNonAdditiveToolChanges(normalizedContext);
 	const appendSystemToolChanges = (message: SystemMessage, leading: boolean, seed: string): void => {
 		if (options?.supportsAdditionalTools) {
 			if (leading && !options.additionalToolsIncludeInitial) return;

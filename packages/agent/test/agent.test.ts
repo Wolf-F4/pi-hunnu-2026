@@ -180,6 +180,68 @@ describe("Agent", () => {
 		expect(initial.toolsAdded?.map((value) => value.name)).toEqual(["echo"]);
 	});
 
+	it("reconciles in-place tool mutations into transcript declarations", async () => {
+		const createTool = (name: string): AgentTool => ({
+			name,
+			label: name,
+			description: `${name} tool`,
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: name }], details: {} }),
+		});
+		const first = createTool("first");
+		const second = createTool("second");
+		let requests = 0;
+		const agent = new Agent({
+			streamFn: (_model, context) => {
+				requests++;
+				const initial = context.messages[0];
+				expect(initial?.role).toBe("system");
+				if (initial?.role !== "system") throw new Error("expected initial system message");
+				expect(initial.toolsAdded?.map((tool) => tool.name)).toEqual(
+					requests === 1 ? ["first"] : ["first", "second"],
+				);
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = createAssistantMessage("done");
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+
+		agent.state.tools = [first];
+		await agent.prompt("First");
+		agent.state.tools.push(second);
+		await agent.prompt("Second");
+
+		const update = agent.state.messages.find(
+			(message) => message.role === "system" && message.toolsAdded?.map((tool) => tool.name).join(",") === "second",
+		);
+		expect(update).toMatchObject({ toolsAdded: [{ name: "second" }] });
+	});
+
+	it("turns systemPrompt assignments into complete transcript checkpoints", async () => {
+		const model = getModel("openai", "gpt-4o-mini");
+		if (!model) throw new Error("expected test model");
+		const agent = new Agent({
+			initialState: { model, systemPrompt: "Old prompt" },
+			streamFn: (_model, context) => {
+				const checkpoint = context.messages.filter((message) => message.role === "system").at(-1);
+				expect(checkpoint?.content).toContain("supersedes all earlier system prompt updates");
+				expect(checkpoint?.content).toContain("New prompt");
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = createAssistantMessage("done");
+					stream.push({ type: "done", reason: "stop", message });
+				});
+				return stream;
+			},
+		});
+
+		agent.state.systemPrompt = "New prompt";
+		await agent.prompt("Hello");
+	});
+
 	it("restores the transcript baseline when reset", () => {
 		const tool: AgentTool = {
 			name: "echo",

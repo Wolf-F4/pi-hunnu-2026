@@ -78,6 +78,21 @@ describe("builtin providers", () => {
 		}
 	});
 
+	it("enables Kimi tool-bearing system messages only for verified K3 models", () => {
+		const models = builtinModels();
+		for (const provider of ["moonshotai", "moonshotai-cn"]) {
+			expect(models.getModel(provider, "kimi-k3")).toHaveProperty("compat.supportsMidConvoToolAdditions", true);
+			expect(models.getModel(provider, "kimi-k2.6")).not.toHaveProperty("compat.supportsMidConvoToolAdditions");
+			expect(models.getModel(provider, "kimi-k2.7-code")).not.toHaveProperty("compat.supportsMidConvoToolAdditions");
+		}
+		for (const modelId of ["accounts/fireworks/models/kimi-k3", "accounts/fireworks/routers/kimi-k3-fast"]) {
+			expect(models.getModel("fireworks", modelId)).toHaveProperty("compat.supportsMidConvoToolAdditions", true);
+		}
+		expect(models.getModel("fireworks", "accounts/fireworks/models/kimi-k2p6")).not.toHaveProperty(
+			"compat.supportsMidConvoToolAdditions",
+		);
+	});
+
 	it("uses API-equivalent implied pricing for Kimi Coding subscription models", () => {
 		const models = builtinModels();
 		const expectedCosts = {

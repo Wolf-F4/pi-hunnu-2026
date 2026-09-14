@@ -276,7 +276,7 @@ describe("AgentSession compaction characterization", () => {
 		const result = await harness.session.compact();
 
 		expect(result.summary).toContain("summary from custom stream");
-		expect(getStreamCallCount()).toBe(2);
+		expect(getStreamCallCount()).toBe(1);
 	});
 
 	it("manually compacts with provider-resolved bearer auth", async () => {
@@ -305,12 +305,12 @@ describe("AgentSession compaction characterization", () => {
 			expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
 			return fauxAssistantMessage("summary with bearer auth");
 		};
-		harness.setResponses([summaryResponse, summaryResponse]);
+		harness.setResponses([summaryResponse]);
 
 		const result = await harness.session.compact();
 
 		expect(result.summary).toContain("summary with bearer auth");
-		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.faux.state.callCount).toBe(1);
 	});
 
 	it("uses the standalone compaction request context", async () => {
@@ -350,10 +350,10 @@ describe("AgentSession compaction characterization", () => {
 		const result = await harness.session.compact();
 
 		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
-		expect(result.usage).toEqual(createUsage(20));
+		expect(result.usage).toEqual(createUsage(10));
 		expect(compactionEntries).toHaveLength(1);
 		expect(compactionEntries[0]?.type === "compaction" ? compactionEntries[0].usage : undefined).toEqual(
-			createUsage(20),
+			createUsage(10),
 		);
 	});
 
@@ -370,7 +370,7 @@ describe("AgentSession compaction characterization", () => {
 		const compactionEnd = harness.eventsOfType("compaction_end").at(-1);
 		expect(compactionEntries).toHaveLength(1);
 		expect(compactionEnd?.result?.estimatedTokensAfter).toBeGreaterThan(0);
-		expect(getStreamCallCount()).toBe(2);
+		expect(getStreamCallCount()).toBe(1);
 	});
 
 	it("notifies extensions when auto-compaction fails", async () => {

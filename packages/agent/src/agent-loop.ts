@@ -8,8 +8,13 @@ import {
 	type Context,
 	collapseSystemMessages,
 	EventStream,
-	getTranscriptCapabilities,
+	getCurrentTools,
+	getToolStateChanges,
+	normalizeContext,
+	type SystemMessage,
+	shouldCollapseSystemMessages,
 	type ToolResultMessage,
+	toToolDeclaration,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -103,17 +108,19 @@ export async function runAgentLoop(
 	signal: AbortSignal | undefined,
 	streamFn: StreamFn,
 ): Promise<AgentMessage[]> {
-	const newMessages: AgentMessage[] = [...prompts];
 	const currentContext: AgentContext = {
 		...context,
-		messages: [...context.messages, ...prompts],
+		messages: [...context.messages],
 	};
+	const initialMessages = reconcilePendingToolState(currentContext, prompts);
+	const newMessages: AgentMessage[] = [...initialMessages];
+	currentContext.messages.push(...initialMessages);
 
 	await emit({ type: "agent_start" });
 	await emit({ type: "turn_start" });
-	for (const prompt of prompts) {
-		await emit({ type: "message_start", message: prompt });
-		await emit({ type: "message_end", message: prompt });
+	for (const message of initialMessages) {
+		await emit({ type: "message_start", message });
+		await emit({ type: "message_end", message });
 	}
 
 	await runLoop(currentContext, newMessages, config, signal, emit, streamFn ?? getDefaultStreamFn());
@@ -202,7 +209,8 @@ async function runLoop(
 			}
 
 			// Process prepared and queued messages before the next assistant response.
-			for (const message of [...preparedMessages, ...pendingMessages]) {
+			const turnMessages = reconcilePendingToolState(currentContext, [...preparedMessages, ...pendingMessages]);
+			for (const message of turnMessages) {
 				await emit({ type: "message_start", message });
 				await emit({ type: "message_end", message });
 				currentContext.messages.push(message);
@@ -274,6 +282,40 @@ async function runLoop(
 	await emit({ type: "agent_end", messages: newMessages });
 }
 
+function reconcilePendingToolState(context: AgentContext, pendingMessages: AgentMessage[]): AgentMessage[] {
+	const systemMessages: SystemMessage[] = [];
+	for (const message of [...context.messages, ...pendingMessages]) {
+		if (message.role === "system") systemMessages.push(message);
+	}
+	if (systemMessages.length === 0) return pendingMessages;
+	const declaredTools = getCurrentTools(normalizeContext({ messages: systemMessages }));
+	const desiredTools = (context.tools ?? []).map(toToolDeclaration);
+	const { toolsAdded, toolsRemoved } = getToolStateChanges(declaredTools, desiredTools);
+	if (toolsAdded.length === 0 && toolsRemoved.length === 0) return pendingMessages;
+
+	const content: string[] = [];
+	if (toolsAdded.length > 0) {
+		content.push(
+			`The following tools are now available and may be used: ${toolsAdded.map((tool) => tool.name).join(", ")}.`,
+		);
+	}
+	if (toolsRemoved.length > 0) {
+		content.push(
+			`The following tools are no longer available. Do not call them; such calls will be rejected: ${toolsRemoved.map((tool) => tool.name).join(", ")}.`,
+		);
+	}
+	const update: SystemMessage = {
+		role: "system",
+		content: content.join("\n\n"),
+		toolsAdded: toolsAdded.length > 0 ? toolsAdded : undefined,
+		toolsRemoved: toolsRemoved.length > 0 ? toolsRemoved : undefined,
+		timestamp: Date.now(),
+	};
+	const insertionIndex = pendingMessages.findIndex((message) => message.role !== "system");
+	const index = insertionIndex === -1 ? pendingMessages.length : insertionIndex;
+	return [...pendingMessages.slice(0, index), update, ...pendingMessages.slice(index)];
+}
+
 async function createContext(
 	context: AgentContext,
 	config: AgentLoopConfig,
@@ -282,10 +324,17 @@ async function createContext(
 	const messages = config.transformContext
 		? await config.transformContext(context.messages, signal)
 		: context.messages;
-	const llmContext: Context = { messages: await config.convertToLlm(messages) };
-	return getTranscriptCapabilities(config.model).midConversationSystemMessages
-		? llmContext
-		: collapseSystemMessages(llmContext, context.systemPrompt);
+	const convertedMessages = await config.convertToLlm(messages);
+	const llmContext: Context = convertedMessages.some((message) => message.role === "system")
+		? { messages: convertedMessages }
+		: {
+				systemPrompt: context.systemPrompt,
+				tools: context.tools?.map(toToolDeclaration),
+				messages: convertedMessages,
+			};
+	return shouldCollapseSystemMessages(config.model, normalizeContext(llmContext))
+		? collapseSystemMessages(llmContext, context.systemPrompt)
+		: llmContext;
 }
 
 /**

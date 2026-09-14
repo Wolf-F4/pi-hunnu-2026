@@ -857,8 +857,11 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 }
 
 function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
-	if (model.api !== "openai-completions" || !model.id.toLowerCase().includes("kimi")) return;
-	if (!(model.provider.startsWith("moonshot") || model.provider === "fireworks")) return;
+	if (model.api !== "openai-completions") return;
+	const supportsKimiToolMessages =
+		(model.provider.startsWith("moonshot") && model.id === "kimi-k3") ||
+		(model.provider === "fireworks" && model.id.includes("kimi-k3"));
+	if (!supportsKimiToolMessages) return;
 	model.compat = {
 		...(model.compat as OpenAICompletionsCompat | undefined),
 		supportsMidConvoToolAdditions: true,

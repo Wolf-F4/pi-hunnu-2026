@@ -266,6 +266,8 @@ Access state via `agent.state`.
 
 Assigning `agent.state.tools = [...]` or `agent.state.messages = [...]` copies the top-level array before storing it. Mutating the returned array mutates the current agent state.
 
+Before each request, the agent reconciles `state.tools` with transcript tool declarations. Assigning the array or mutating it with methods such as `push()` and `splice()` emits a structured system-message transition before the next prompt or continuation. Assigning `state.systemPrompt` similarly emits a complete prompt checkpoint. Use `prepareNextTurnWithContext` for changes during an active run.
+
 During streaming, `agent.state.streamingMessage` contains the current partial assistant message.
 
 `agent.state.isStreaming` remains `true` until the run fully settles, including awaited `agent_end` subscribers.
@@ -491,6 +493,8 @@ const context: AgentContext = {
 
 const config: AgentLoopConfig = {
   model: getModel("openai", "gpt-4o"),
+  // Filtering every system message makes AgentContext.systemPrompt/tools the
+  // initial shorthand declarations. Preserve system messages to use transcript-owned updates.
   convertToLlm: (msgs) => msgs.filter(m => ["user", "assistant", "toolResult"].includes(m.role)),
   toolExecution: "parallel",  // overridden by per-tool executionMode if set
   beforeToolCall: async ({ toolCall, args, context }) => undefined,

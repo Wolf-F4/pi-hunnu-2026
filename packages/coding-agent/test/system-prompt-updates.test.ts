@@ -69,7 +69,7 @@ describe("system prompt updates", () => {
 		}
 	});
 
-	test("appends a checkpoint when opening a transcript without prompt metadata", async () => {
+	test("persists a migration checkpoint chronologically and anchors it in memory", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-system-prompt-migration-"));
 		try {
 			const sessionManager = SessionManager.inMemory(tempDir);
@@ -80,14 +80,36 @@ describe("system prompt updates", () => {
 				model: getModel("anthropic", "claude-sonnet-4-5")!,
 				settingsManager: SettingsManager.inMemory(),
 				sessionManager,
-				noTools: "all",
 			});
 			try {
-				const roles = ["user", "system"];
-				expect(created.session.messages.map((message) => message.role)).toEqual(roles);
-				expect(sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual(roles);
+				expect(created.session.messages.map((message) => message.role)).toEqual(["system", "user"]);
+				const initial = created.session.messages[0];
+				expect(initial?.role).toBe("system");
+				if (initial?.role !== "system") throw new Error("expected initial system message");
+				expect(initial.toolsAdded?.length).toBeGreaterThan(0);
+				expect(sessionManager.buildSessionContext().messages.map((message) => message.role)).toEqual([
+					"user",
+					"system",
+				]);
 			} finally {
 				created.session.dispose();
+			}
+
+			const resumed = await createAgentSession({
+				cwd: tempDir,
+				agentDir: join(tempDir, "agent"),
+				model: getModel("anthropic", "claude-sonnet-4-5")!,
+				settingsManager: SettingsManager.inMemory(),
+				sessionManager,
+			});
+			try {
+				expect(resumed.session.messages.map((message) => message.role)).toEqual(["system", "user"]);
+				const initial = resumed.session.messages[0];
+				expect(initial?.role).toBe("system");
+				if (initial?.role !== "system") throw new Error("expected initial system message");
+				expect(initial.toolsAdded?.length).toBeGreaterThan(0);
+			} finally {
+				resumed.session.dispose();
 			}
 		} finally {
 			rmSync(tempDir, { recursive: true, force: true });
@@ -109,7 +131,7 @@ describe("system prompt updates", () => {
 		expect(diffSystemPrompts(previous, current)).toEqual({ type: "replace" });
 	});
 
-	test("setActiveTools emits tool and prompt changes before the next request", async () => {
+	test("setActiveTools in before_agent_start controls the next request", async () => {
 		const extension: ExtensionFactory = (pi) => {
 			for (const name of ["first", "second"]) {
 				pi.registerTool({
@@ -122,6 +144,10 @@ describe("system prompt updates", () => {
 					execute: async () => ({ content: [{ type: "text", text: name }], details: {} }),
 				});
 			}
+			let turn = 0;
+			pi.on("before_agent_start", () => {
+				if (turn++ === 1) pi.setActiveTools(["second"]);
+			});
 		};
 		const harness = await createHarness({ extensionFactories: [extension], initialActiveToolNames: ["first"] });
 		try {
@@ -156,7 +182,6 @@ describe("system prompt updates", () => {
 				},
 			]);
 			await harness.session.prompt("first");
-			harness.session.setActiveToolsByName(["second"]);
 			await harness.session.prompt("second");
 			const state = harness.sessionManager
 				.getEntries()

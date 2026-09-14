@@ -52,7 +52,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
-import { getDeclaredTools, hasToolDefinitionReplacements } from "../utils/transcript-state.ts";
+import { getDeclaredTools, hasNonAdditiveToolChanges } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
 	createGrammarToolInputProperties,
@@ -805,7 +805,7 @@ function buildParams(
 	),
 ) {
 	const supportsIncrementalToolAdditions =
-		compat.supportsMidConvoToolAdditions === true && !hasToolDefinitionReplacements(context);
+		compat.supportsMidConvoToolAdditions === true && !hasNonAdditiveToolChanges(context);
 	const requestTools = supportsIncrementalToolAdditions ? getInitialTools(context) : getCurrentTools(context);
 	const messages = convertMessages(model, context, compat, {
 		grammarToolInputProperties,
@@ -1218,7 +1218,7 @@ export function convertMessages(
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id));
 	const supportsIncrementalToolAdditions =
-		compat.supportsMidConvoToolAdditions === true && !hasToolDefinitionReplacements(normalizedContext);
+		compat.supportsMidConvoToolAdditions === true && !hasNonAdditiveToolChanges(normalizedContext);
 	const loadedToolNames = new Set(getInitialTools(normalizedContext).map((tool) => tool.name));
 	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 

@@ -7,6 +7,7 @@ import {
 	type TextContent,
 	type ThinkingBudgets,
 	type Transport,
+	toToolDeclaration,
 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -68,22 +69,37 @@ type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "
 	streamingMessage?: AgentMessage;
 	pendingToolCalls: Set<string>;
 	errorMessage?: string;
+	setSystemPromptSnapshot(systemPrompt: string): void;
 };
 
 function createMutableAgentState(
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
+	initialState:
+		| Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>
+		| undefined,
+	onSystemPromptChange: () => void,
 ): MutableAgentState {
+	let systemPrompt = initialState?.systemPrompt ?? "";
 	let tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
 	const [initialMessage] = normalizeContext({
 		systemPrompt: initialState?.systemPrompt,
-		tools,
+		tools: tools.map(toToolDeclaration),
 		messages: [],
 	}).messages;
 	if (messages[0]?.role !== "system" && initialMessage) messages.unshift(initialMessage);
 
 	return {
-		systemPrompt: initialState?.systemPrompt ?? "",
+		get systemPrompt() {
+			return systemPrompt;
+		},
+		set systemPrompt(nextSystemPrompt: string) {
+			if (systemPrompt === nextSystemPrompt) return;
+			systemPrompt = nextSystemPrompt;
+			onSystemPromptChange();
+		},
+		setSystemPromptSnapshot(nextSystemPrompt: string) {
+			systemPrompt = nextSystemPrompt;
+		},
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
 		get tools() {
@@ -183,6 +199,7 @@ type ActiveRun = {
  */
 export class Agent {
 	private _state: MutableAgentState;
+	private systemPromptDirty = false;
 	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
 	private readonly steeringQueue: PendingMessageQueue;
 	private readonly followUpQueue: PendingMessageQueue;
@@ -227,7 +244,9 @@ export class Agent {
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
 		const runtimeOptions: Partial<AgentOptions> = options ?? {};
-		this._state = createMutableAgentState(runtimeOptions.initialState);
+		this._state = createMutableAgentState(runtimeOptions.initialState, () => {
+			this.systemPromptDirty = true;
+		});
 		this.convertToLlm = runtimeOptions.convertToLlm ?? defaultConvertToLlm;
 		this.transformContext = runtimeOptions.transformContext;
 		this.streamFunction = runtimeOptions.streamFn ?? getDefaultStreamFn();
@@ -270,6 +289,12 @@ export class Agent {
 	 */
 	get state(): AgentState {
 		return this._state;
+	}
+
+	/** @internal Update the complete prompt snapshot when the caller already owns transcript checkpoints. */
+	setSystemPromptSnapshot(systemPrompt: string): void {
+		this._state.setSystemPromptSnapshot(systemPrompt);
+		this.systemPromptDirty = false;
 	}
 
 	/** Controls how queued steering messages are drained. */
@@ -348,9 +373,10 @@ export class Agent {
 
 		this._state.messages = normalizeContext({
 			systemPrompt: this._state.systemPrompt,
-			tools: this._state.tools,
+			tools: this._state.tools.map(toToolDeclaration),
 			messages: [],
 		}).messages;
+		this.systemPromptDirty = false;
 		this._state.isStreaming = false;
 		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();
@@ -425,9 +451,10 @@ export class Agent {
 		messages: AgentMessage[],
 		options: { skipInitialSteeringPoll?: boolean } = {},
 	): Promise<void> {
+		const contextUpdates = this.takeSystemPromptUpdate();
 		await this.runWithLifecycle(async (signal) => {
 			await runAgentLoop(
-				messages,
+				[...contextUpdates, ...messages],
 				this.createContextSnapshot(),
 				this.createLoopConfig(options),
 				(event) => this.processEvents(event),
@@ -438,7 +465,19 @@ export class Agent {
 	}
 
 	private async runContinuation(): Promise<void> {
+		const contextUpdates = this.takeSystemPromptUpdate();
 		await this.runWithLifecycle(async (signal) => {
+			if (contextUpdates.length > 0) {
+				await runAgentLoop(
+					contextUpdates,
+					this.createContextSnapshot(),
+					this.createLoopConfig(),
+					(event) => this.processEvents(event),
+					signal,
+					this.streamFunction,
+				);
+				return;
+			}
 			await runAgentLoopContinue(
 				this.createContextSnapshot(),
 				this.createLoopConfig(),
@@ -447,6 +486,31 @@ export class Agent {
 				this.streamFunction,
 			);
 		});
+	}
+
+	private takeSystemPromptUpdate(): AgentMessage[] {
+		const updates: AgentMessage[] = [];
+		if (this.systemPromptDirty) {
+			this.systemPromptDirty = false;
+			updates.push({
+				role: "system",
+				content: `The following is the complete current system prompt. It supersedes all earlier system prompt updates:\n\n${this._state.systemPrompt}`,
+				timestamp: Date.now(),
+			});
+		}
+		if (
+			this._state.tools.length > 0 &&
+			!this._state.messages.some((message) => message.role === "system") &&
+			!updates.some((message) => message.role === "system")
+		) {
+			updates.push({
+				role: "system",
+				content: "",
+				toolsAdded: this._state.tools.map(toToolDeclaration),
+				timestamp: Date.now(),
+			});
+		}
+		return updates;
 	}
 
 	private createContextSnapshot(): AgentContext {

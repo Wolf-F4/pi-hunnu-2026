@@ -416,9 +416,10 @@ export class AgentSession {
 			const initialMessage = this._preparePromptAndToolLoadout(this._baseSystemPromptOptions);
 			if (initialMessage) {
 				if (persistedMessages.length > 0) {
-					// Existing sessions without prompt metadata cannot insert a new root entry.
-					// Append a complete checkpoint so in-memory and persisted chronology agree.
-					this.agent.state.messages = [...persistedMessages, initialMessage];
+					// Existing sessions cannot insert a new persisted root entry. Keep the
+					// append-only file chronological, but project its checkpoint at the head
+					// of the in-memory provider transcript.
+					this.agent.state.messages = [initialMessage, ...persistedMessages];
 				} else {
 					const messages = this.agent.state.messages;
 					this.agent.state.messages = [
@@ -429,6 +430,7 @@ export class AgentSession {
 				this.sessionManager.appendMessage(initialMessage);
 			}
 		}
+		this._anchorInitialSystemMessage();
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -1014,7 +1016,7 @@ export class AgentSession {
 		this.agent.state.tools = tools;
 
 		const systemPrompt = this._rebuildSystemPrompt(validToolNames);
-		if (!this._modelContextState) this.agent.state.systemPrompt = systemPrompt;
+		if (!this._modelContextState) this.agent.setSystemPromptSnapshot(systemPrompt);
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1157,15 +1159,27 @@ export class AgentSession {
 
 		this.agent.state.tools = selectedTools;
 		this._modelContextState = update.state;
-		this.agent.state.systemPrompt = renderSystemPrompt(update.state.prompt);
+		this.agent.setSystemPromptSnapshot(renderSystemPrompt(update.state.prompt));
 		return update.message;
+	}
+
+	private _anchorInitialSystemMessage(): void {
+		const messages = this.agent.state.messages;
+		if (messages[0]?.role === "system") return;
+		const systemMessageIndex = messages.findIndex((message) => message.role === "system");
+		if (systemMessageIndex === -1) return;
+		this.agent.state.messages = [
+			messages[systemMessageIndex],
+			...messages.slice(0, systemMessageIndex),
+			...messages.slice(systemMessageIndex + 1),
+		];
 	}
 
 	private _restoreModelContextState(restoreTools = this._initialActiveToolNames === undefined): void {
 		const stored = this.sessionManager.getSystemPromptState();
 		if (!stored) {
 			this._modelContextState = undefined;
-			this.agent.state.systemPrompt = buildSystemPrompt(this._baseSystemPromptOptions);
+			this.agent.setSystemPromptSnapshot(buildSystemPrompt(this._baseSystemPromptOptions));
 			return;
 		}
 		this._modelContextState = {
@@ -1173,7 +1187,7 @@ export class AgentSession {
 			tools: new Map(stored.tools.map((tool) => [tool.name, tool])),
 			modelKey: stored.modelKey,
 		};
-		this.agent.state.systemPrompt = renderSystemPrompt(stored.prompt);
+		this.agent.setSystemPromptSnapshot(renderSystemPrompt(stored.prompt));
 		if (restoreTools) {
 			const restoredToolNames = stored.tools.map((tool) => tool.name).filter((name) => this._toolRegistry.has(name));
 			this.agent.state.tools = restoredToolNames.flatMap((name) => {
@@ -1389,8 +1403,12 @@ export class AgentSession {
 					timestamp: Date.now(),
 				});
 			}
-			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
-			this._runSystemPromptOptions = result.systemPromptOptions;
+			const systemPromptOptions = normalizeBuildSystemPromptOptions({
+				...result.systemPromptOptions,
+				selectedTools: this.getActiveToolNames(),
+			});
+			const updateMessage = this._preparePromptAndToolLoadout(systemPromptOptions);
+			this._runSystemPromptOptions = systemPromptOptions;
 			if (updateMessage) messages.unshift(updateMessage);
 		} catch (error) {
 			preflightResult?.(false);
@@ -2592,7 +2610,7 @@ export class AgentSession {
 
 		this._resourceLoader.extendResources(extensionPaths);
 		const systemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		if (!this._modelContextState) this.agent.state.systemPrompt = systemPrompt;
+		if (!this._modelContextState) this.agent.setSystemPromptSnapshot(systemPrompt);
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{

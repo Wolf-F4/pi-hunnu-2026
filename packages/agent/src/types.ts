@@ -334,13 +334,13 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
  * assigned arrays before storing them.
  */
 export interface AgentState {
-	/** System prompt sent with each model request. */
+	/** Latest complete system prompt. Assignment emits a complete checkpoint on the next prompt or continuation. */
 	systemPrompt: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	/** Available executable tools. Assigning a new array copies the top-level array. */
+	/** Available executable tools. Changes are reconciled on the next prompt or continuation. */
 	set tools(tools: AgentTool<any>[]);
 	get tools(): AgentTool<any>[];
 	/** Conversation transcript. Assigning a new array copies the top-level array. */
@@ -417,7 +417,7 @@ export interface AgentContext {
 	systemPrompt: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
-	/** Tools available for execution in this run. */
+	/** Current executable tool loadout, reconciled against transcript declarations before each request. */
 	tools?: AgentTool<any>[];
 }
 

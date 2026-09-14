@@ -1030,6 +1030,7 @@ function buildParams(
 	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
+	const supportsMidConvoToolChanges = compat.supportsMidConvoSystemMessages && compat.supportsMidConvoToolChanges;
 	const converted = convertMessages(
 		conversationMessages,
 		isOAuthToken,
@@ -1037,7 +1038,7 @@ function buildParams(
 		compat.allowEmptySignature,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
 		compat.supportsMidConvoSystemMessages,
-		compat.supportsMidConvoToolChanges,
+		supportsMidConvoToolChanges,
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, options);
@@ -1089,7 +1090,7 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	const tools = compat.supportsMidConvoToolChanges ? getDeclaredTools(context) : getCurrentTools(context);
+	const tools = supportsMidConvoToolChanges ? getDeclaredTools(context) : getCurrentTools(context);
 	if (tools.length > 0) {
 		params.tools = convertTools(
 			tools,
