@@ -78,19 +78,29 @@ describe("builtin providers", () => {
 		}
 	});
 
-	it("enables Kimi tool-bearing system messages only for verified K3 models", () => {
+	it("enables Kimi system tool messages only for verified K3 models", () => {
 		const models = builtinModels();
-		for (const provider of ["moonshotai", "moonshotai-cn"]) {
-			expect(models.getModel(provider, "kimi-k3")).toHaveProperty("compat.supportsMidConvoToolAdditions", true);
-			expect(models.getModel(provider, "kimi-k2.6")).not.toHaveProperty("compat.supportsMidConvoToolAdditions");
-			expect(models.getModel(provider, "kimi-k2.7-code")).not.toHaveProperty("compat.supportsMidConvoToolAdditions");
+		const supported = [
+			["moonshotai", "kimi-k3"],
+			["moonshotai-cn", "kimi-k3"],
+			["fireworks", "accounts/fireworks/models/kimi-k3"],
+			["fireworks", "accounts/fireworks/routers/kimi-k3-fast"],
+		] as const;
+		const unsupported = [
+			["moonshotai", "kimi-k2.6"],
+			["moonshotai", "kimi-k2.7-code"],
+			["moonshotai-cn", "kimi-k2.6"],
+			["moonshotai-cn", "kimi-k2.7-code"],
+			["fireworks", "accounts/fireworks/models/kimi-k2p6"],
+		] as const;
+		for (const capability of ["supportsMidConvoSystemMessages", "supportsMidConvoToolAdditions"]) {
+			for (const [provider, modelId] of supported) {
+				expect(models.getModel(provider, modelId)).toHaveProperty(`compat.${capability}`, true);
+			}
+			for (const [provider, modelId] of unsupported) {
+				expect(models.getModel(provider, modelId)).not.toHaveProperty(`compat.${capability}`);
+			}
 		}
-		for (const modelId of ["accounts/fireworks/models/kimi-k3", "accounts/fireworks/routers/kimi-k3-fast"]) {
-			expect(models.getModel("fireworks", modelId)).toHaveProperty("compat.supportsMidConvoToolAdditions", true);
-		}
-		expect(models.getModel("fireworks", "accounts/fireworks/models/kimi-k2p6")).not.toHaveProperty(
-			"compat.supportsMidConvoToolAdditions",
-		);
 	});
 
 	it("uses API-equivalent implied pricing for Kimi Coding subscription models", () => {

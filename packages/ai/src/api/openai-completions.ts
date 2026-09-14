@@ -51,7 +51,7 @@ import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { getSystemMessageText } from "../utils/text.ts";
+import { getSystemMessageText, renderSystemMessageAsUserText } from "../utils/text.ts";
 import { getDeclaredTools, hasNonAdditiveToolChanges } from "../utils/transcript-state.ts";
 import {
 	appendGrammarToolInputJsonDelta,
@@ -169,12 +169,14 @@ type ResolvedOpenAICompletionsCompat = Omit<
 	| "cacheControlFormat"
 	| "supportsThinkingTokenBudget"
 	| "thinkingTokenBudgetField"
+	| "supportsMidConvoSystemMessages"
 	| "supportsMidConvoToolAdditions"
 	| "vllmPriority"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	supportsThinkingTokenBudget?: OpenAICompletionsCompat["supportsThinkingTokenBudget"];
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
+	supportsMidConvoSystemMessages?: OpenAICompletionsCompat["supportsMidConvoSystemMessages"];
 	supportsMidConvoToolAdditions?: OpenAICompletionsCompat["supportsMidConvoToolAdditions"];
 	vllmPriority?: OpenAICompletionsCompat["vllmPriority"];
 };
@@ -805,7 +807,9 @@ function buildParams(
 	),
 ) {
 	const supportsIncrementalToolAdditions =
-		compat.supportsMidConvoToolAdditions === true && !hasNonAdditiveToolChanges(context);
+		compat.supportsMidConvoSystemMessages &&
+		compat.supportsMidConvoToolAdditions === true &&
+		!hasNonAdditiveToolChanges(context);
 	const requestTools = supportsIncrementalToolAdditions ? getInitialTools(context) : getCurrentTools(context);
 	const messages = convertMessages(model, context, compat, {
 		grammarToolInputProperties,
@@ -1218,7 +1222,9 @@ export function convertMessages(
 
 	const transformedMessages = transformMessages(normalizedContext.messages, model, (id) => normalizeToolCallId(id));
 	const supportsIncrementalToolAdditions =
-		compat.supportsMidConvoToolAdditions === true && !hasNonAdditiveToolChanges(normalizedContext);
+		compat.supportsMidConvoSystemMessages &&
+		compat.supportsMidConvoToolAdditions === true &&
+		!hasNonAdditiveToolChanges(normalizedContext);
 	const loadedToolNames = new Set(getInitialTools(normalizedContext).map((tool) => tool.name));
 	const instructionRole = model.reasoning && compat.supportsDeveloperRole ? "developer" : "system";
 
@@ -1226,9 +1232,14 @@ export function convertMessages(
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
+		const lowerSystemMessage = msg.role === "system" && i > 0 && !compat.supportsMidConvoSystemMessages;
 		// Some providers don't allow user messages directly after tool results
 		// Insert a synthetic assistant message to bridge the gap
-		if (compat.requiresAssistantAfterToolResult && lastRole === "toolResult" && msg.role === "user") {
+		if (
+			compat.requiresAssistantAfterToolResult &&
+			lastRole === "toolResult" &&
+			(msg.role === "user" || lowerSystemMessage)
+		) {
 			params.push({
 				role: "assistant",
 				content: "I have processed the tool results.",
@@ -1247,9 +1258,12 @@ export function convertMessages(
 				};
 				params.push(kimiToolMessage as unknown as ChatCompletionMessageParam);
 			}
-			const text = getSystemMessageText(msg);
+			const text = lowerSystemMessage ? renderSystemMessageAsUserText(msg) : getSystemMessageText(msg);
 			if (text.length > 0) {
-				params.push({ role: instructionRole, content: sanitizeSurrogates(text) });
+				params.push({
+					role: lowerSystemMessage ? "user" : instructionRole,
+					content: sanitizeSurrogates(text),
+				});
 			}
 		} else if (msg.role === "user") {
 			if (typeof msg.content === "string") {
@@ -1464,7 +1478,7 @@ export function convertMessages(
 			continue;
 		}
 
-		lastRole = msg.role;
+		lastRole = lowerSystemMessage ? "user" : msg.role;
 	}
 
 	return params;
@@ -1664,6 +1678,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		thinkingTokenBudgetField: undefined,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
+		supportsMidConvoSystemMessages: false,
 		supportsMidConvoToolAdditions: false,
 		cacheControlFormat,
 		sendSessionAffinityHeaders: isOpenRouter,
@@ -1710,6 +1725,8 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
+		supportsMidConvoSystemMessages:
+			model.compat.supportsMidConvoSystemMessages ?? detected.supportsMidConvoSystemMessages,
 		supportsMidConvoToolAdditions:
 			model.compat.supportsMidConvoToolAdditions ?? detected.supportsMidConvoToolAdditions,
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,

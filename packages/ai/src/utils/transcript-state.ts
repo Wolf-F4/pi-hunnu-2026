@@ -32,8 +32,8 @@ export function getTranscriptCapabilities(model: Model<Api>): TranscriptCapabili
 		midConversationSystemMessages:
 			nativeTranscript ||
 			RESPONSES_APIS.has(model.api) ||
-			(model.api === "anthropic-messages" && compat?.supportsMidConvoSystemMessages === true) ||
-			model.api === "openai-completions" ||
+			((model.api === "anthropic-messages" || model.api === "openai-completions") &&
+				compat?.supportsMidConvoSystemMessages === true) ||
 			model.api === "mistral-conversations",
 	};
 }

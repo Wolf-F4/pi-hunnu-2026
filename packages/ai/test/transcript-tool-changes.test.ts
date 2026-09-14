@@ -266,6 +266,34 @@ describe("transcript tool changes", () => {
 		expect(payload.input.map((item) => item.type)).not.toContain("tool_search_call");
 	});
 
+	test("lowers later system messages when OpenAI-compatible support is not declared", async () => {
+		const model: Model<"openai-completions"> = {
+			id: "custom-model",
+			name: "Custom model",
+			api: "openai-completions",
+			provider: "custom-provider",
+			baseUrl: "http://127.0.0.1:9",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 1000,
+		};
+		const payload = await capturePayload<{
+			messages: Array<{ role: string; content?: string }>;
+		}>(model, {
+			messages: [
+				{ role: "system", content: "initial prompt", timestamp: 0 },
+				{ role: "user", content: "before", timestamp: 1 },
+				{ role: "system", content: "later guidance", timestamp: 2 },
+			],
+		});
+
+		expect(payload.messages.map((message) => message.role)).toEqual(["system", "user", "user"]);
+		expect(payload.messages[0]?.content).toBe("initial prompt");
+		expect(payload.messages[2]?.content).toBe("<system_reminder>\nlater guidance\n</system_reminder>");
+	});
+
 	test("anchors Kimi additions in tool-bearing system messages", async () => {
 		const model: Model<"openai-completions"> = {
 			id: "kimi-k3",
@@ -278,7 +306,7 @@ describe("transcript tool changes", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 100000,
 			maxTokens: 1000,
-			compat: { supportsMidConvoToolAdditions: true },
+			compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true },
 		};
 		const additionContext: Context = {
 			messages: [
@@ -289,10 +317,13 @@ describe("transcript tool changes", () => {
 		};
 		const payload = await capturePayload<{
 			tools?: Array<{ function?: { name: string } }>;
-			messages: Array<{ role: string; tools?: Array<{ function?: { name: string } }> }>;
+			messages: Array<{ role: string; content?: string; tools?: Array<{ function?: { name: string } }> }>;
 		}>(model, additionContext);
 
 		expect(payload.tools?.map((value) => value.function?.name)).toEqual(["base_tool"]);
+		expect(
+			payload.messages.some((message) => message.role === "system" && message.content === "updated guidance"),
+		).toBe(true);
 		expect(payload.messages.find((message) => message.tools)?.tools?.map((value) => value.function?.name)).toEqual([
 			"late_tool",
 		]);
@@ -310,7 +341,7 @@ describe("transcript tool changes", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 100000,
 			maxTokens: 1000,
-			compat: { supportsMidConvoToolAdditions: true },
+			compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true },
 		};
 		const payload = await capturePayload<{
 			tools?: Array<{ function?: { name: string } }>;
@@ -333,7 +364,7 @@ describe("transcript tool changes", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 100000,
 			maxTokens: 1000,
-			compat: { supportsMidConvoToolAdditions: true },
+			compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true },
 		};
 		const payload = await capturePayload<{
 			tools?: Array<{ function?: { name: string; description: string } }>;

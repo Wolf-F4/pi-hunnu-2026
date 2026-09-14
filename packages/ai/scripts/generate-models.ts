@@ -625,6 +625,8 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	zaiToolStream: false,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
 } satisfies Required<
@@ -727,6 +729,8 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		zaiToolStream: false,
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		supportsOpenAIGrammarTools: false,
+		supportsMidConvoSystemMessages: false,
+		supportsMidConvoToolAdditions: false,
 		...(cacheControlFormat ? { cacheControlFormat } : {}),
 		sendSessionAffinityHeaders: isOpenRouter,
 		supportsLongCacheRetention: !(
@@ -864,6 +868,7 @@ function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
 	if (!supportsKimiToolMessages) return;
 	model.compat = {
 		...(model.compat as OpenAICompletionsCompat | undefined),
+		supportsMidConvoSystemMessages: true,
 		supportsMidConvoToolAdditions: true,
 	};
 }

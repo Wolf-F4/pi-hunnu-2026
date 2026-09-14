@@ -637,7 +637,9 @@ export interface OpenAICompletionsCompat {
 	supportsThinkingTokenBudget?: boolean;
 	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
-	/** Whether system messages can introduce additional tools mid-conversation. Default: false; the generated model catalog enables it for capable models. */
+	/** Whether the provider accepts system or developer messages after the conversation has started. Default: false; the generated model catalog enables it for verified models. */
+	supportsMidConvoSystemMessages?: boolean;
+	/** Whether system messages can introduce additional tools mid-conversation. Default: false; requires `supportsMidConvoSystemMessages`. */
 	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;

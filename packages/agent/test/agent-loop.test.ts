@@ -154,7 +154,7 @@ describe("agentLoop with AgentMessage", () => {
 		}
 	});
 
-	it("projects the latest prompt and tools for addition-only transports after removals", async () => {
+	it("projects the latest prompt and tools when transcript system history is unsupported", async () => {
 		const oldTool = { name: "old", description: "Old tool", parameters: Type.Object({}) };
 		const currentToolDeclaration = {
 			name: "current",
@@ -168,6 +168,18 @@ describe("agentLoop with AgentMessage", () => {
 		};
 		const models: Array<Model<"openai-completions"> | Model<"openai-responses">> = [
 			{
+				id: "custom-model",
+				name: "Custom model",
+				api: "openai-completions",
+				provider: "custom-provider",
+				baseUrl: "https://example.invalid",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 8192,
+				maxTokens: 2048,
+			},
+			{
 				id: "kimi-k3",
 				name: "Kimi K3",
 				api: "openai-completions",
@@ -178,7 +190,7 @@ describe("agentLoop with AgentMessage", () => {
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 				contextWindow: 8192,
 				maxTokens: 2048,
-				compat: { supportsMidConvoToolAdditions: true },
+				compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true },
 			},
 			{
 				...createModel(),
